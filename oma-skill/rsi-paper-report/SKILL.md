@@ -1,40 +1,40 @@
 ---
 name: rsi-paper-report
-description: Build a seven-day arXiv RSI recommendation radar, or read one selected paper and produce a rigorous Chinese full report.
+description: 用于生成近七天 arXiv RSI 论文推荐列表，或阅读指定论文全文并生成严谨的中文解读报告。
 ---
 
-# RSI Weekly Radar and Paper Report
+# RSI 每周论文推荐与全文解读
 
-This Skill has two explicit modes. Always read `mode` from the user arguments.
+本 Skill 包含两种明确的执行模式。每次执行时，从用户传入的参数中读取 `mode`。
 
-- `mode=digest`: discover and rank a weekly recommendation list; write `digest.json`.
-- `mode=report`: read one specified paper in full; write `report.md` and then `result.json`.
+- `mode=digest`：检索、筛选并排序本周论文推荐列表，写入 `digest.json`。
+- `mode=report`：阅读一篇指定论文的全文，先写入 `report.md`，再写入 `result.json`。
 
-Arguments also contain `reference_time=<ISO-8601 UTC timestamp>` and `request_id=<opaque id>`. Treat `reference_time` as the exclusive upper bound and exactly seven days earlier as the inclusive lower bound. Use the paper's first `<published>` timestamp, never `<updated>`, for the window check.
+参数还包含 `reference_time=<ISO-8601 格式的 UTC 时间戳>` 和 `request_id=<请求标识>`。时间窗口的上界为 `reference_time`（不包含），下界为其恰好七天前（包含）。判断论文是否在窗口内时，使用首次发布时间 `<published>`，而不是更新时间 `<updated>`。
 
-## Shared discovery rules
+## 通用筛选规则
 
-The relevant topic family includes:
+相关研究方向包括：
 
-- recursive self-improvement;
-- self-improving or self-evolving agents;
-- automated agent/harness design;
-- persistent tool, evaluator, policy or research-loop improvement.
+- 递归自我改进（Recursive Self-Improvement，RSI）；
+- 自我改进或自我演化的智能体；
+- 智能体及其执行框架（harness）的自动化设计；
+- 能持续保留的工具、评估器、策略或研究循环改进。
 
-Exclude finance, medicine, human self-help and papers where self-improvement is only a passing phrase.
+排除金融、医学、个人成长类内容，以及仅顺带提及自我改进的论文。
 
-Rank substantive relevance using these questions:
+根据以下问题判断实质相关性并排序：
 
-1. Does the system change its own policy, harness, tools, evaluator, training data or research process?
-2. Does the change persist beyond one answer?
-3. Can the change affect a later improvement cycle?
-4. Is there a concrete method or evaluation?
+1. 系统是否改变自身的策略、执行框架、工具、评估器、训练数据或研究过程？
+2. 这些改变是否会在一次回答结束后继续保留？
+3. 这些改变是否会影响后续的改进循环？
+4. 论文是否提供具体方法或评估？
 
-Never invent authors, dates, metrics, links or experimental conclusions. Distinguish reported facts, author claims and your inference. Do not reproduce long passages or redistribute the paper.
+作者、日期、指标、链接和实验结论必须有来源依据，不得编造。明确区分论文报告的事实、作者主张和你的推断。使用概括表达，不复制大段原文或重新分发论文。
 
-## Mode: `digest`
+## 推荐列表模式：`digest`
 
-Make at most one request to `https://export.arxiv.org/api/query`. Do not paginate. Request at most 50 entries sorted by `submittedDate` descending. Combine `submittedDate:[START TO END]` with a union of:
+最多向 `https://export.arxiv.org/api/query` 发起一次请求，不进行分页。最多获取 50 条记录，按 `submittedDate` 降序排序。将时间条件 `submittedDate:[START TO END]` 与下列英文检索词的并集组合：
 
 - `recursive self-improvement`
 - `self-improving agent`
@@ -43,11 +43,11 @@ Make at most one request to `https://export.arxiv.org/api/query`. Do not paginat
 - `automated agent design`
 - `harness self-improvement`
 
-If public web retrieval cannot consume Atom, use one sandbox command with Python standard-library `urllib.request` and `xml.etree.ElementTree`; install no package. Filter locally by `<published>` and relevance.
+如果网页检索工具无法处理 Atom 格式，使用一次沙箱命令，通过 Python 标准库 `urllib.request` 和 `xml.etree.ElementTree` 获取并解析，不安装额外依赖。按 `<published>` 和相关性在本地筛选。
 
-Return the strongest 6–8 papers. This mode is a recommendation scan based on metadata and abstracts, not a full-paper review. Keep each field concise enough for a consumer UI.
+返回最值得推荐的 6–8 篇论文。本模式的分析依据是元数据和摘要，不代表已阅读全文。各字段内容应简洁，适合在用户端页面展示。
 
-Write `digest.json` only after the complete list is ready:
+完整列表准备好后，再写入 `digest.json`：
 
 ```json
 {
@@ -60,8 +60,8 @@ Write `digest.json` only after the complete list is ready:
     {
       "rank": 1,
       "arxiv_id": "2609.20519v1",
-      "title": "Paper title",
-      "authors": ["Author One", "Author Two"],
+      "title": "论文原标题",
+      "authors": ["作者一", "作者二"],
       "published_at": "2026-09-17T14:58:29Z",
       "categories": ["cs.AI"],
       "abstract_url": "https://arxiv.org/abs/2609.20519v1",
@@ -81,35 +81,35 @@ Write `digest.json` only after the complete list is ready:
 }
 ```
 
-If fewer than six genuinely relevant papers exist, return the smaller honest list. If none exist, write `status: "no_candidate"`. Do not fill the list with weak matches.
+如果真正相关的论文不足六篇，按实际数量返回；不要用低相关论文凑数。如果没有符合条件的论文，写入 `status: "no_candidate"`。
 
-## Mode: `report`
+## 全文解读模式：`report`
 
-Require `arxiv_id`. Open its abstract page and verify the first publication time lies in the requested window. Prefer `https://arxiv.org/html/{arxiv_id}` and read at least abstract, introduction, method, experiments, limitations and conclusion. If usable HTML is unavailable, write `result.json` with `status: "no_full_text"`.
+必须提供 `arxiv_id`。打开论文摘要页，核实首次发布时间位于请求指定的窗口内。优先阅读 `https://arxiv.org/html/{arxiv_id}`，至少覆盖摘要、引言、方法、实验、局限和结论。如果无法获取可用的 HTML 全文，写入 `result.json`，并设置 `status: "no_full_text"`。
 
-Write a polished Chinese `report.md` containing:
+生成结构清晰的中文报告 `report.md`，包含以下内容：
 
-1. title, authors, first publication time, categories and source links;
-2. `30 秒结论`;
-3. `研究问题`;
-4. `核心方法`;
-5. `关键实验结果`, including datasets, baselines, metrics and reported numbers;
-6. `与 RSI 的关系`: what improves, persistence, next-cycle effect, evaluator and remaining human role;
-7. `RSI 相关性评分` from 0–100 with rationale;
-8. `局限与风险`;
-9. `对工程实践的启发`;
-10. `推荐阅读对象`;
-11. direct HTTPS sources.
+1. 标题、作者、首次发布时间、分类和来源链接；
+2. `30 秒结论`；
+3. `研究问题`；
+4. `核心方法`；
+5. `关键实验结果`：包括数据集、对比基线、评估指标和论文报告的数值；
+6. `与 RSI 的关系`：改进对象、改进是否持续保留、对下一轮循环的影响、评估器，以及仍需人工参与的环节；
+7. `RSI 相关性评分`：0–100 分，并说明评分依据；
+8. `局限与风险`；
+9. `对工程实践的启发`；
+10. `推荐阅读对象`；
+11. 直接指向来源的 HTTPS 链接。
 
-The report must contain no raw HTML, script, iframe, tracking URL or embedded remote image.
+报告使用 Markdown，不包含原始 HTML、脚本、iframe、追踪链接或嵌入式远程图片。
 
-After `report.md` is complete, write `result.json` last:
+确认 `report.md` 写入完成后，最后写入 `result.json`：
 
 ```json
 {
   "status": "success",
   "arxiv_id": "2609.20519v1",
-  "title": "Paper title",
+  "title": "论文原标题",
   "published_at": "2026-09-17T14:58:29Z",
   "analysis_basis": "full_html",
   "rsi_relevance_score": 90,
@@ -118,4 +118,4 @@ After `report.md` is complete, write `result.json` last:
 }
 ```
 
-Allowed terminal statuses in either mode are `success`, `irrelevant`, `out_of_window`, `no_candidate`, `no_full_text`, and `error`. Non-success output must include a concise safe `error` string.
+两种模式允许使用的终态均为 `success`、`irrelevant`、`out_of_window`、`no_candidate`、`no_full_text` 和 `error`。非成功结果必须在 `error` 字段中提供简洁且不包含敏感信息的错误说明。
