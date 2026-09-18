@@ -52,7 +52,7 @@ npm test
 npm start
 ```
 
-打开 `http://localhost:8787`。私有数据看板位于 `http://localhost:8787/admin`。
+打开 `http://localhost:8787`。私有数据看板位于 `http://localhost:8787/admin`，通过页面内的管理员登录表单访问；数据接口仍受认证保护。
 
 ## 4. 执行链路
 
@@ -112,9 +112,26 @@ cd rsi-weekly-recommendation
 
 1. 拉取仓库，在项目根目录执行 `npm ci`。
 2. 复制 `.env.example` 为 `.env.local`，填入 OMA 配置和独立的管理员密码。
-3. 设置 `PUBLIC_BASE_URL=https://opengrove.io`，保留 `PORT=8787`。
+3. 设置 `PUBLIC_BASE_URL=https://opengrove.io/rsi-weekly-recommendation`，保留 `PORT=8787`。应用会自动将该子路径用于页面、API、返回链接及 Cookie。
 4. 用 systemd 或现有进程管理器运行 `npm start`，工作目录设为项目根目录，启用自动重启；只运行一个实例。
-5. 配置 HTTPS 反向代理，将 `opengrove.io` 转发到 `127.0.0.1:8787`；持久化并备份 `data/`。
+5. 配置 HTTPS 反向代理，仅将 `/rsi-weekly-recommendation/` 转发到 `127.0.0.1:8787`，保留完整请求路径；持久化并备份 `data/`。
 6. 提供服务器公网 IP，由域名管理者添加根域名的 A 记录；检查现有解析后再修改。
 
 更新部署时拉取代码、执行 `npm ci` 并重启服务，保留服务器上的 `.env.local` 和 `data/`。
+
+正式页面入口为 `https://opengrove.io/rsi-weekly-recommendation/`，看板入口为 `https://opengrove.io/rsi-weekly-recommendation/admin`。
+
+现有 Nginx HTTPS server 块中可添加以下配置；`proxy_pass` 的端口后面不要添加 `/`，以保留子路径：
+
+```nginx
+location = /rsi-weekly-recommendation {
+    return 308 /rsi-weekly-recommendation/;
+}
+location /rsi-weekly-recommendation/ {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```

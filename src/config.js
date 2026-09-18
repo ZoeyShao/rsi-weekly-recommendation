@@ -18,6 +18,11 @@ export function loadConfig({ requireOma = true } = {}) {
   const omaBaseUrl = trimTrailingSlash(process.env.OMA_BASE_URL?.trim() ?? "");
   const omaApiKey = process.env.OMA_API_KEY?.trim() ?? "";
   const omaAgentId = process.env.OMA_AGENT_ID?.trim() ?? "";
+  const publicBaseUrl = trimTrailingSlash(process.env.PUBLIC_BASE_URL?.trim() || "http://localhost:8787");
+  const basePath = new URL(publicBaseUrl).pathname.replace(/\/+$/, "");
+  if (basePath && !/^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(basePath)) {
+    throw new Error("PUBLIC_BASE_URL must use a simple URL path");
+  }
 
   if (requireOma) {
     const missing = [
@@ -35,7 +40,8 @@ export function loadConfig({ requireOma = true } = {}) {
     omaApiKey,
     omaAgentId,
     port: positiveInteger("PORT", 8787),
-    publicBaseUrl: trimTrailingSlash(process.env.PUBLIC_BASE_URL?.trim() || "http://localhost:8787"),
+    publicBaseUrl,
+    basePath,
     maxQueuedJobs: positiveInteger("MAX_QUEUED_JOBS", 20),
     reportTimeoutMs: positiveInteger("REPORT_TIMEOUT_MS", 15 * 60 * 1000),
     pollIntervalMs: positiveInteger("POLL_INTERVAL_MS", 3000),

@@ -33,7 +33,7 @@ runner = new JobRunner({
 await runner.recover();
 for (const digest of store.list()) await ensureReportsForDigest({ digest, store, runner });
 
-const app = new Hono();
+const app = new Hono({ strict: false }).basePath(config.basePath || "/");
 const ipWindows = new Map();
 const USER_COOKIE = "rsi_user_id";
 
@@ -50,7 +50,7 @@ function userId(c) {
       httpOnly: true,
       sameSite: "Lax",
       secure: config.publicBaseUrl.startsWith("https://"),
-      path: "/",
+      path: config.basePath || "/",
       maxAge: 60 * 60 * 24 * 365,
     });
   }
@@ -91,7 +91,7 @@ function reportProjection(job) {
     error: job.error,
     parentJobId: job.parentJobId ?? null,
     arxivId: job.arxivId ?? job.result?.arxiv_id ?? null,
-    reportUrl: `/reports/${job.id}`,
+    reportUrl: `${config.basePath}/reports/${job.id}`,
     ...(job.status === "succeeded" && job.reportMarkdown
       ? { reportHtml: renderReport(job.reportMarkdown) }
       : {}),
@@ -110,7 +110,7 @@ function digestProjection(job, currentUserId = null) {
           reportJob: reportJob ? {
             jobId: reportJob.id,
             status: reportJob.status,
-            reportUrl: `/reports/${reportJob.id}`,
+            reportUrl: `${config.basePath}/reports/${reportJob.id}`,
             error: reportJob.error,
           } : null,
         };
@@ -123,7 +123,7 @@ function digestProjection(job, currentUserId = null) {
     createdAt: job.createdAt,
     completedAt: job.completedAt,
     error: job.error,
-    digestUrl: `/digests/${job.id}`,
+    digestUrl: `${config.basePath}/digests/${job.id}`,
     digest: job.result ? { ...job.result, papers } : null,
   };
 }
@@ -135,19 +135,19 @@ async function readJson(c) {
 app.get("/health", (c) => c.json({ status: "ok" }));
 app.get("/", (c) => {
   userId(c);
-  return c.html(renderPage());
+  return c.html(renderPage(null, config.basePath));
 });
 app.get("/digests/:id", (c) => {
   userId(c);
   const job = store.get(c.req.param("id"));
-  if (!job || job.kind !== "digest") return c.html(renderPage(), 404);
-  return c.html(renderPage({ type: "digest", id: job.id }));
+  if (!job || job.kind !== "digest") return c.html(renderPage(null, config.basePath), 404);
+  return c.html(renderPage({ type: "digest", id: job.id }, config.basePath));
 });
 app.get("/reports/:id", (c) => {
   userId(c);
   const job = store.get(c.req.param("id"));
-  if (!job || (job.kind ?? "report") !== "report") return c.html(renderPage(), 404);
-  return c.html(renderPage({ type: "report", id: job.id }));
+  if (!job || (job.kind ?? "report") !== "report") return c.html(renderPage(null, config.basePath), 404);
+  return c.html(renderPage({ type: "report", id: job.id }, config.basePath));
 });
 
 app.post("/api/digests", async (c) => {
@@ -159,8 +159,8 @@ app.post("/api/digests", async (c) => {
   return c.json({
     jobId: job.id,
     status: job.status,
-    statusUrl: `/api/digests/${job.id}`,
-    digestUrl: `/digests/${job.id}`,
+    statusUrl: `${config.basePath}/api/digests/${job.id}`,
+    digestUrl: `${config.basePath}/digests/${job.id}`,
   }, 202);
 });
 
@@ -204,7 +204,7 @@ app.post("/api/reports", async (c) => {
     arxivId: typeof body.arxivId === "string" ? body.arxivId : null,
     referenceTime: new Date().toISOString(),
   });
-  return c.json({ ...reportProjection(job), statusUrl: `/api/reports/${job.id}` }, 202);
+  return c.json({ ...reportProjection(job), statusUrl: `${config.basePath}/api/reports/${job.id}` }, 202);
 });
 
 app.get("/api/reports/:id", (c) => {
@@ -235,10 +235,8 @@ app.get("/api/me", (c) => c.json({ userId: userId(c), identityType: "anonymous_c
 
 if (config.adminUsername && config.adminPassword) {
   const protectAdmin = basicAuth({ username: config.adminUsername, password: config.adminPassword });
-  app.use("/admin", protectAdmin);
-  app.use("/admin/*", protectAdmin);
   app.use("/api/admin/*", protectAdmin);
-  app.get("/admin", (c) => c.html(renderAdminPage()));
+  app.get("/admin", (c) => c.html(renderAdminPage(config.basePath)));
   app.get("/api/admin/metrics", (c) => c.json(analytics.metrics()));
 } else {
   app.get("/admin", (c) => c.json({ error: "Admin dashboard is not configured." }, 503));
