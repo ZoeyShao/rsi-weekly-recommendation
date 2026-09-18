@@ -12,6 +12,9 @@ export const ANALYTICS_EVENTS = new Set([
   "full_report_viewed",
   "source_link_clicked",
   "paper_vote",
+  "chat_started",
+  "chat_message_sent",
+  "chat_recommendation_requested",
 ]);
 
 function optionalId(value) {
@@ -62,6 +65,7 @@ export class AnalyticsStore {
       at: new Date().toISOString(),
       userId,
       digestId: optionalId(input.digestId),
+      chatId: optionalId(input.chatId),
       reportJobId: optionalId(input.reportJobId),
       arxivId: optionalId(input.arxivId),
       position: safePosition(input.position),
@@ -121,6 +125,8 @@ export class AnalyticsStore {
           fullReportOpens: 0,
           sourceClicks: 0,
           votes: 0,
+          chatMessages: 0,
+          chatRecommendations: 0,
         };
         user.events += 1;
         if (event.at < user.firstSeenAt) user.firstSeenAt = event.at;
@@ -130,6 +136,8 @@ export class AnalyticsStore {
         if (event.type === "full_report_requested") user.fullReportOpens += 1;
         if (event.type === "source_link_clicked") user.sourceClicks += 1;
         if (event.type === "paper_vote") user.votes += 1;
+        if (event.type === "chat_message_sent") user.chatMessages += 1;
+        if (event.type === "chat_recommendation_requested") user.chatRecommendations += 1;
         userStats.set(eventUserId, user);
       }
       if (event.position !== null) {

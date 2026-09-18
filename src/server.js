@@ -1,9 +1,10 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { basicAuth } from "hono/basic-auth";
-import { getCookie, setCookie } from "hono/cookie";
+import { getConnInfo } from "@hono/node-server/conninfo";
+import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
-import { randomUUID } from "node:crypto";
+import { dirname } from "node:path";
 import { loadConfig } from "./config.js";
 import { OmaClient } from "./oma-client.js";
 import { JobStore } from "./job-store.js";
@@ -13,6 +14,9 @@ import { renderReport } from "./report-renderer.js";
 import { renderPage } from "./page.js";
 import { renderAdminPage } from "./admin-page.js";
 import { ensureReportsForDigest } from "./report-scheduler.js";
+import { createIdentity } from "./identity.js";
+import { ChatStore } from "./chat-store.js";
+import { ChatService } from "./chat-service.js";
 
 const config = loadConfig();
 const store = new JobStore(config.jobDataFile);
@@ -20,6 +24,10 @@ await store.init();
 const analytics = new AnalyticsStore(config.analyticsDataDirectory);
 await analytics.init();
 const oma = new OmaClient({ baseUrl: config.omaBaseUrl, apiKey: config.omaApiKey });
+const chatStore = new ChatStore(config.chatDataFile);
+await chatStore.init();
+const userId = await createIdentity({ dataDirectory: dirname(config.chatDataFile), basePath: config.basePath,
+  secure: config.publicBaseUrl.startsWith("https://") });
 let runner;
 
 runner = new JobRunner({
@@ -32,42 +40,36 @@ runner = new JobRunner({
 });
 await runner.recover();
 for (const digest of store.list()) await ensureReportsForDigest({ digest, store, runner });
+const chats = new ChatService({ store: chatStore, oma, agentId: config.omaAgentId, runner, jobs: store });
+// Complete and persist replies even when the browser tab has been closed.
+let syncingChats = false;
+setInterval(async () => {
+  if (syncingChats) return;
+  syncingChats = true;
+  try { await Promise.allSettled(chatStore.pending().map(chat => chats.sync(chat.id, chat.ownerId))); }
+  finally { syncingChats = false; }
+}, 5000).unref();
 
 const app = new Hono({ strict: false }).basePath(config.basePath || "/");
 const ipWindows = new Map();
-const USER_COOKIE = "rsi_user_id";
-
-function userId(c) {
-  const cached = c.get("userId");
-  if (cached) return cached;
-  const cookieValue = getCookie(c, USER_COOKIE);
-  const id = typeof cookieValue === "string" && /^[0-9a-f-]{36}$/i.test(cookieValue)
-    ? cookieValue
-    : randomUUID();
-  c.set("userId", id);
-  if (id !== cookieValue) {
-    setCookie(c, USER_COOKIE, id, {
-      httpOnly: true,
-      sameSite: "Lax",
-      secure: config.publicBaseUrl.startsWith("https://"),
-      path: config.basePath || "/",
-      maxAge: 60 * 60 * 24 * 365,
-    });
-  }
-  return id;
-}
+app.use("/*", bodyLimit({ maxSize: 32 * 1024, onError: c => c.json({ error: "请求内容过长。" }, 413) }));
+app.use("/*", async (c, next) => {
+  c.header("Cache-Control", "no-store");
+  await next();
+});
 
 function clientIp(c) {
-  return c.req.header("x-forwarded-for")?.split(",")[0]?.trim()
-    || c.req.header("x-real-ip")
-    || "local";
+  const remote = getConnInfo(c).remote.address ?? "local";
+  // Only a local reverse proxy may supply the client address.
+  return ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(remote)
+    ? c.req.header("x-real-ip") || remote : remote;
 }
 
-function rateLimited(ip) {
+function rateLimited(ip, limit = config.requestsPerIpPerHour) {
   const now = Date.now();
   const cutoff = now - 60 * 60 * 1000;
   const recent = (ipWindows.get(ip) ?? []).filter((timestamp) => timestamp > cutoff);
-  if (recent.length >= config.requestsPerIpPerHour) {
+  if (recent.length >= limit) {
     ipWindows.set(ip, recent);
     return true;
   }
@@ -80,6 +82,8 @@ function activeJobCount() {
   return store.list().filter((job) => ["queued", "running"].includes(job.status)).length;
 }
 
+function canReadJob(job, c) { return job && (!job.ownerId || job.ownerId === userId(c)); }
+
 function reportProjection(job) {
   return {
     jobId: job.id,
@@ -89,6 +93,7 @@ function reportProjection(job) {
     completedAt: job.completedAt,
     result: job.result,
     error: job.error,
+    chatId: job.chatId ?? null,
     parentJobId: job.parentJobId ?? null,
     arxivId: job.arxivId ?? job.result?.arxiv_id ?? null,
     reportUrl: `${config.basePath}/reports/${job.id}`,
@@ -125,6 +130,7 @@ function digestProjection(job, currentUserId = null) {
     error: job.error,
     digestUrl: `${config.basePath}/digests/${job.id}`,
     digest: job.result ? { ...job.result, papers } : null,
+    chatId: job.chatId ?? null,
   };
 }
 
@@ -140,13 +146,13 @@ app.get("/", (c) => {
 app.get("/digests/:id", (c) => {
   userId(c);
   const job = store.get(c.req.param("id"));
-  if (!job || job.kind !== "digest") return c.html(renderPage(null, config.basePath), 404);
+  if (!canReadJob(job, c) || job.kind !== "digest") return c.text("推荐任务不存在。", 404);
   return c.html(renderPage({ type: "digest", id: job.id }, config.basePath));
 });
 app.get("/reports/:id", (c) => {
   userId(c);
   const job = store.get(c.req.param("id"));
-  if (!job || (job.kind ?? "report") !== "report") return c.html(renderPage(null, config.basePath), 404);
+  if (!canReadJob(job, c) || (job.kind ?? "report") !== "report") return c.text("报告不存在。", 404);
   return c.html(renderPage({ type: "report", id: job.id }, config.basePath));
 });
 
@@ -166,13 +172,13 @@ app.post("/api/digests", async (c) => {
 
 app.get("/api/digests/:id", (c) => {
   const job = store.get(c.req.param("id"));
-  if (!job || job.kind !== "digest") return c.json({ error: "推荐任务不存在。" }, 404);
+  if (!canReadJob(job, c) || job.kind !== "digest") return c.json({ error: "推荐任务不存在。" }, 404);
   return c.json(digestProjection(job, userId(c)));
 });
 
 app.post("/api/digests/:id/papers/:arxivId/report", async (c) => {
   const digest = store.get(c.req.param("id"));
-  if (!digest || digest.kind !== "digest" || digest.status !== "succeeded") {
+  if (!canReadJob(digest, c) || digest.kind !== "digest" || digest.status !== "succeeded") {
     return c.json({ error: "推荐列表尚未完成或不存在。" }, 404);
   }
   const arxivId = c.req.param("arxivId");
@@ -190,6 +196,9 @@ app.post("/api/digests/:id/papers/:arxivId/report", async (c) => {
     parentJobId: digest.id,
     arxivId,
     referenceTime: digest.referenceTime,
+    ownerId: digest.ownerId ?? null,
+    chatId: digest.chatId ?? null,
+    preferences: digest.preferences ?? null,
   });
   return c.json(reportProjection(job), 202);
 });
@@ -210,7 +219,7 @@ app.post("/api/reports", async (c) => {
 app.get("/api/reports/:id", (c) => {
   userId(c);
   const job = store.get(c.req.param("id"));
-  if (!job || (job.kind ?? "report") !== "report") return c.json({ error: "任务不存在。" }, 404);
+  if (!canReadJob(job, c) || (job.kind ?? "report") !== "report") return c.json({ error: "任务不存在。" }, 404);
   return c.json(reportProjection(job));
 });
 
@@ -233,6 +242,49 @@ app.post("/api/feedback", async (c) => {
 
 app.get("/api/me", (c) => c.json({ userId: userId(c), identityType: "anonymous_cookie" }));
 
+app.get("/chats/:id", (c) => {
+  const chat = chats.owned(c.req.param("id"), userId(c));
+  return c.html(renderPage({ type: "chat", id: chat.id }, config.basePath));
+});
+app.get("/api/chats", (c) => c.json({ chats: chatStore.list(userId(c)).map(chat => ({
+  id: chat.id, title: chat.title, updatedAt: chat.updatedAt, status: chat.status,
+})) }));
+app.post("/api/chats", async (c) => {
+  const owner = userId(c);
+  if (rateLimited(`chat-create:${clientIp(c)}`, 10)) return c.json({ error: "创建对话过于频繁，请稍后再试。" }, 429);
+  const chat = await chatStore.create(owner);
+  await analytics.track({ type: "chat_started", userId: owner, chatId: chat.id });
+  return c.json(chats.project(chat), 201);
+});
+app.get("/api/chats/:id", async (c) => {
+  const chat = await chats.sync(c.req.param("id"), userId(c));
+  return c.json(chats.project(chat));
+});
+app.post("/api/chats/:id/messages", async (c) => {
+  const owner = userId(c), id = c.req.param("id");
+  const current = chats.owned(id, owner);
+  const body = await readJson(c);
+  const duplicate = current.messages.some(m => m.id === body.requestId);
+  if (!duplicate && rateLimited(`chat-message:${clientIp(c)}`, config.chatRequestsPerHour)) return c.json({ error: "对话消息过于频繁，请稍后再试。" }, 429);
+  const chat = await chats.send(id, owner, body);
+  if (!duplicate) await analytics.track({ type: "chat_message_sent", userId: owner, chatId: id });
+  return c.json(chats.project(chat), 202);
+});
+app.post("/api/chats/:id/recommendations", async (c) => {
+  const owner = userId(c), id = c.req.param("id");
+  chats.owned(id, owner);
+  const body = await readJson(c);
+  const duplicate = store.list().some(j => j.chatId === id && j.recommendationRequestId === body.requestId);
+  if (!duplicate && rateLimited(clientIp(c))) return c.json({ error: "生成推荐过于频繁，请稍后再试。" }, 429);
+  if (!duplicate && activeJobCount() >= config.maxQueuedJobs) return c.json({ error: "当前推荐任务较多，请稍后再试。" }, 503);
+  const job = await chats.recommend(id, owner, body.requestId);
+  if (!duplicate) {
+    await analytics.track({ type: "chat_recommendation_requested", userId: owner, chatId: id, digestId: job.id });
+    await analytics.track({ type: "digest_requested", userId: owner, chatId: id, digestId: job.id });
+  }
+  return c.json({ jobId: job.id, digestUrl: `${config.basePath}/digests/${job.id}` }, 202);
+});
+
 if (config.adminUsername && config.adminPassword) {
   const protectAdmin = basicAuth({ username: config.adminUsername, password: config.adminPassword });
   app.use("/api/admin/*", protectAdmin);
@@ -244,7 +296,7 @@ if (config.adminUsername && config.adminPassword) {
 }
 
 app.onError((error, c) => {
-  if (error instanceof HTTPException) return error.getResponse();
+  if (error instanceof HTTPException) return error.res ? error.getResponse() : c.json({ error: error.message }, error.status);
   console.error(error);
   return c.json({ error: "服务暂时不可用。" }, 500);
 });

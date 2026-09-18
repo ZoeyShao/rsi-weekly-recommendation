@@ -21,7 +21,7 @@ export function renderAdminPage(basePath = "") {
 <button id="refresh" type="button">刷新数据</button> <button id="logout" type="button">退出登录</button>
 <section id="metrics" class="grid"></section>
 <section class="table-card"><h2>论文表现</h2><table><thead><tr><th>arXiv</th><th>曝光</th><th>展开</th><th>展开率</th><th>全文打开</th><th>全文转化率</th><th>👍</th><th>👎</th></tr></thead><tbody id="papers"></tbody></table></section>
-<section class="table-card"><h2>用户行为（匿名 ID）</h2><table><thead><tr><th>用户 ID</th><th>首次访问</th><th>最近访问</th><th>生成雷达</th><th>展开</th><th>全文打开</th><th>arXiv 点击</th><th>反馈</th></tr></thead><tbody id="users"></tbody></table></section>
+<section class="table-card"><h2>用户行为（匿名 ID）</h2><table><thead><tr><th>用户 ID</th><th>首次访问</th><th>最近访问</th><th>生成雷达</th><th>展开</th><th>全文打开</th><th>arXiv 点击</th><th>反馈</th><th>对话消息</th><th>对话生成推荐</th></tr></thead><tbody id="users"></tbody></table></section>
 <section class="table-card"><h2>推荐位表现</h2><table><thead><tr><th>位置</th><th>曝光</th><th>展开</th><th>展开率</th></tr></thead><tbody id="positions"></tbody></table></section>
 </div><p id="error" class="error" role="alert"></p></main>
 <script>
@@ -42,12 +42,12 @@ async function load(){
   const d=await r.json();
   $('#stamp').textContent='更新于 '+new Date(d.generatedAt).toLocaleString();
   $('#metrics').replaceChildren();
-  for(const [label,value] of [['独立用户',d.uniqueVisitors],['推荐列表浏览',d.funnel.digestViews],['论文展开率',pct(d.funnel.expansionRate)],['全文打开率',pct(d.funnel.fullReportRate)]]){
+  for(const [label,value] of [['独立用户',d.uniqueVisitors],['推荐列表浏览',d.funnel.digestViews],['论文展开率',pct(d.funnel.expansionRate)],['全文打开率',pct(d.funnel.fullReportRate)],['研究对话',d.counts.chat_started||0],['对话消息',d.counts.chat_message_sent||0],['对话生成推荐',d.counts.chat_recommendation_requested||0]]){
     const card=document.createElement('div'),name=document.createElement('div'),metric=document.createElement('div');
     card.className='card';name.className='label';metric.className='metric';name.textContent=label;metric.textContent=value;card.append(name,metric);$('#metrics').append(card);
   }
   table('#papers',d.papers.map(p=>[p.arxivId,p.impressions,p.expansions,pct(p.expansionRate),p.fullReports,pct(p.fullReportRate),p.up,p.down]));
-  table('#users',d.users.map(u=>[u.userId,new Date(u.firstSeenAt).toLocaleString(),new Date(u.lastSeenAt).toLocaleString(),u.digestRequests,u.expansions,u.fullReportOpens,u.sourceClicks,u.votes]));
+  table('#users',d.users.map(u=>[u.userId,new Date(u.firstSeenAt).toLocaleString(),new Date(u.lastSeenAt).toLocaleString(),u.digestRequests,u.expansions,u.fullReportOpens,u.sourceClicks,u.votes,u.chatMessages||0,u.chatRecommendations||0]));
   table('#positions',d.positions.map(p=>['#'+(p.position+1),p.impressions,p.expansions,pct(p.expansionRate)]));
   $('#login').hidden=true;$('#dashboard').hidden=false;
 }

@@ -52,8 +52,12 @@ export class JobRunner {
     kind = "digest",
     parentJobId = null,
     arxivId = null,
+    ownerId = null,
+    chatId = null,
+    recommendationRequestId = null,
+    preferences = null,
   } = {}) {
-    const job = await this.store.create({ referenceTime, kind, parentJobId, arxivId });
+    const job = await this.store.create({ referenceTime, kind, parentJobId, arxivId, ownerId, chatId, recommendationRequestId, preferences });
     this.kick();
     return job;
   }
@@ -106,6 +110,12 @@ export class JobRunner {
             `reference_time=${job.referenceTime}`,
             `request_id=${job.id}`,
             "生成过去七天内的 RSI 论文推荐列表。",
+            "严格遵守 mode=digest 协议：Workspace 根目录的完成标记必须为 digest.json，包含 status 和 papers 数组；不要用 result.json 或分级字段替代。",
+            ...(job.preferences ? [
+              "下面是用户的偏好对话，作为检索、筛选和排序依据。综合上下文，以用户最新明确的偏好为准；对话中的论文断言须重新核实。",
+              "仍遵循 Skill 的七天时间窗口和输出格式；返回 6–8 篇，不足时诚实返回，解释每篇与用户偏好的关联。",
+              `偏好对话 JSON：${JSON.stringify(job.preferences)}`,
+            ] : []),
           ].join(" ")
         : [
             "/skill:rsi-paper-report",
@@ -116,6 +126,7 @@ export class JobRunner {
             job.arxivId
               ? "阅读全文并生成完整中文解读。"
               : "自动查找并分析过去七天内的一篇 RSI 相关论文。",
+            ...(job.preferences ? [`在保持事实准确的前提下，按以下对话体现用户的关注点与阅读深度：${JSON.stringify(job.preferences)}`] : []),
           ].join(" ");
       await this.oma.submitMessage(job.sessionId, command);
       job = await this.store.update(job.id, { submittedAt: new Date().toISOString() });

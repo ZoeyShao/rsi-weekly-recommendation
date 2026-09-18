@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
 
 function positiveInteger(name, fallback) {
   const raw = process.env[name];
@@ -20,6 +20,7 @@ export function loadConfig({ requireOma = true } = {}) {
   const omaAgentId = process.env.OMA_AGENT_ID?.trim() ?? "";
   const publicBaseUrl = trimTrailingSlash(process.env.PUBLIC_BASE_URL?.trim() || "http://localhost:8787");
   const basePath = new URL(publicBaseUrl).pathname.replace(/\/+$/, "");
+  const jobDataFile = resolve(process.env.JOB_DATA_FILE?.trim() || "./data/jobs.json");
   if (basePath && !/^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(basePath)) {
     throw new Error("PUBLIC_BASE_URL must use a simple URL path");
   }
@@ -46,7 +47,9 @@ export function loadConfig({ requireOma = true } = {}) {
     reportTimeoutMs: positiveInteger("REPORT_TIMEOUT_MS", 15 * 60 * 1000),
     pollIntervalMs: positiveInteger("POLL_INTERVAL_MS", 3000),
     requestsPerIpPerHour: positiveInteger("REQUESTS_PER_IP_PER_HOUR", 5),
-    jobDataFile: resolve(process.env.JOB_DATA_FILE?.trim() || "./data/jobs.json"),
+    jobDataFile,
+    chatDataFile: resolve(process.env.CHAT_DATA_FILE?.trim() || `${dirname(jobDataFile)}/chats.json`),
+    chatRequestsPerHour: positiveInteger("CHAT_REQUESTS_PER_HOUR", 30),
     analyticsDataDirectory: resolve(process.env.ANALYTICS_DATA_DIRECTORY?.trim() || "./data"),
     adminUsername: process.env.ADMIN_USERNAME?.trim() ?? "",
     adminPassword: process.env.ADMIN_PASSWORD ?? "",

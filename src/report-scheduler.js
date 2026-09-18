@@ -13,6 +13,9 @@ export async function ensureReportsForDigest({ digest, store, runner }) {
         parentJobId: digest.id,
         arxivId: paper.arxiv_id,
         referenceTime: digest.referenceTime,
+        ownerId: digest.ownerId ?? null,
+        chatId: digest.chatId ?? null,
+        preferences: digest.preferences ?? null,
       }));
     }
   }

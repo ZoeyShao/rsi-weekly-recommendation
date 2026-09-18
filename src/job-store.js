@@ -29,13 +29,18 @@ export class JobStore {
     return this.jobs.get(id) ?? null;
   }
 
-  async create({ referenceTime, kind = "report", parentJobId = null, arxivId = null }) {
+  async create({ referenceTime, kind = "report", parentJobId = null, arxivId = null,
+    ownerId = null, chatId = null, recommendationRequestId = null, preferences = null }) {
     const now = new Date().toISOString();
     const job = {
       id: randomUUID(),
       kind,
       parentJobId,
       arxivId,
+      ownerId,
+      chatId,
+      recommendationRequestId,
+      preferences,
       status: "queued",
       referenceTime,
       createdAt: now,

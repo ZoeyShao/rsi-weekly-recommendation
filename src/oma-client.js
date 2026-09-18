@@ -16,6 +16,7 @@ export class OmaClient {
 
   async request(path, options = {}) {
     const response = await this.fetchFn(`${this.baseUrl}${path}`, {
+      signal: AbortSignal.timeout(30_000),
       ...options,
       headers: {
         "x-api-key": this.apiKey,
@@ -56,6 +57,10 @@ export class OmaClient {
 
   getSession(sessionId) {
     return this.request(`/v1/sessions/${encodeURIComponent(sessionId)}`);
+  }
+
+  getSessionEvents(sessionId, afterSeq = 0) {
+    return this.request(`/v1/sessions/${encodeURIComponent(sessionId)}/events?after_seq=${afterSeq}&limit=100`);
   }
 
   async getWorkspaceText(workspaceId, path) {
